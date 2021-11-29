@@ -386,6 +386,7 @@ SDL_JoystickOpen(int device_index)
     SDL_Joystick *joystick;
     SDL_Joystick *joysticklist;
     const char *joystickname = NULL;
+    const char *joystickname_compat = NULL;
 
     SDL_LockJoysticks();
 
@@ -434,6 +435,14 @@ SDL_JoystickOpen(int device_index)
     } else {
         joystick->name = NULL;
     }
+    // Set the compatible name for the Linux drivers
+#ifdef SDL_JOYSTICK_LINUX
+    if (driver == &SDL_LINUX_JoystickDriver) {
+        joystickname_compat = driver->GetCompatDeviceName(device_index);
+        joystick->compat_name = SDL_strdup(joystickname_compat);
+    } else
+#endif
+        joystick->compat_name = NULL;
 
     joystick->guid = driver->GetDeviceGUID(device_index);
 
@@ -832,6 +841,20 @@ SDL_JoystickName(SDL_Joystick *joystick)
     }
 
     return joystick->name;
+}
+
+/*
+ * Get the friendly _old_ (pre-2.0.12) name of this joystick
+ * Only implemented on Linux, other drivers will return the same name as `SDL_JoystickName`
+ */
+const char*
+SDL_JoystickCompatName(SDL_Joystick *joystick)
+{
+    if (!SDL_PrivateJoystickValid(joystick)) {
+        return NULL;
+    }
+
+    return joystick->compat_name;
 }
 
 /**
@@ -1722,8 +1745,10 @@ PrefixMatch(const char *a, const char *b)
     return matchlen;
 }
 
-char *
-SDL_CreateJoystickName(Uint16 vendor, Uint16 product, const char *vendor_name, const char *product_name)
+/* The original libSDL 'SDL_CreateJoystickName'.
+  It has an extra parameter (bool compat_naming) to generate a pre-2.0.12 name when requested */
+static char *
+SDL_Private_CreateJoystickName(Uint16 vendor, Uint16 product, const char *vendor_name, const char *product_name, const SDL_bool compat_naming)
 {
     static struct {
         const char *prefix;
@@ -1739,9 +1764,11 @@ SDL_CreateJoystickName(Uint16 vendor, Uint16 product, const char *vendor_name, c
     char *name;
     size_t i, len;
 
-    custom_name = GuessControllerName(vendor, product);
-    if (custom_name) {
-        return SDL_strdup(custom_name);
+    if (!compat_naming) {
+        custom_name = GuessControllerName(vendor, product);
+        if (custom_name) {
+            return SDL_strdup(custom_name);
+        }
     }
 
     if (!vendor_name) {
@@ -1777,6 +1804,10 @@ SDL_CreateJoystickName(Uint16 vendor, Uint16 product, const char *vendor_name, c
     } else {
         name = SDL_strdup("Controller");
     }
+
+    /* If old naming compatibility is requested, don't perform further corrections on the name */
+    if (compat_naming)
+        return name;
 
     /* Trim trailing whitespace */
     for (len = SDL_strlen(name); (len > 0 && name[len - 1] == ' '); --len) {
@@ -1823,6 +1854,19 @@ SDL_CreateJoystickName(Uint16 vendor, Uint16 product, const char *vendor_name, c
     }
 
     return name;
+}
+
+char *
+SDL_CreateJoystickName(Uint16 vendor, Uint16 product, const char *vendor_name, const char *product_name)
+{
+    return SDL_Private_CreateJoystickName(vendor, product, vendor_name, product_name, SDL_GetHintBoolean(SDL_HINT_JOYSTICK_USE_OLD_NAME, SDL_TRUE));
+}
+
+/* Creates a backwards compatible (pre-2.0.12) joystick name */
+char *
+SDL_CreateCompatJoystickName(Uint16 vendor, Uint16 product, const char *vendor_name, const char *product_name)
+{
+    return SDL_Private_CreateJoystickName(vendor, product, vendor_name, product_name, SDL_TRUE);
 }
 
 SDL_GameControllerType
