@@ -78,7 +78,8 @@ PrintJoystick(SDL_Joystick *joystick)
         break;
     }
     SDL_Log("Joystick\n");
-    SDL_Log("       name: %s\n", SDL_JoystickName(joystick));
+    SDL_Log("       name: '%s'\n", SDL_JoystickName(joystick));
+    SDL_Log("   old name: '%s'\n", SDL_JoystickCompatName(joystick));
     SDL_Log("       type: %s\n", type);
     SDL_Log("       axes: %d\n", SDL_JoystickNumAxes(joystick));
     SDL_Log("      balls: %d\n", SDL_JoystickNumBalls(joystick));
