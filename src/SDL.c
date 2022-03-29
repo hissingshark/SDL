@@ -61,6 +61,98 @@ extern int SDL_HelperWindowCreate(void);
 extern int SDL_HelperWindowDestroy(void);
 #endif
 
+/* Required for suspend/resume function */
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/file.h>
+#include <signal.h>
+
+static SDL_atomic_t monitor_paused;
+static SDL_atomic_t monitor_active;
+static SDL_Thread *monitor_thread = NULL;
+extern audiodevice_backup backup;
+
+/* Function to handle SIGUSR1 */
+static void
+enter_stop_cont(int x, siginfo_t *y, void *z)
+{
+  SDL_AtomicSet(&monitor_paused, 1);
+}
+
+/* Function to handle SIGCONT */
+static void
+recover_from_stop_cont(int x, siginfo_t *y, void *z)
+{
+  SDL_AtomicSet(&monitor_paused, 0);
+  if (SDL_WasInit(SDL_INIT_EVENTS)) {
+    SDL_PumpEvents();
+    SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+  }
+}
+
+/* thread to monitor suspend requests */
+static int
+suspend_monitor(void *noop) {
+  while (SDL_AtomicGet(&monitor_active)) {
+    // check if event thread handled SIGUSR1, but only need action if using audio
+    if(SDL_AtomicGet(&monitor_paused) && SDL_WasInit(SDL_INIT_AUDIO)) { // stop audio ready for halt
+      // backup and disable audio hotplug events
+      int es_add = SDL_EventState(SDL_AUDIODEVICEADDED, SDL_DISABLE);
+      int es_rem = SDL_EventState(SDL_AUDIODEVICEREMOVED, SDL_DISABLE);
+      if (backup.legacy) {
+        SDL_CloseAudio();
+      }
+      else {
+        SDL_CloseAudioDevice(backup.id);
+      }
+      SDL_QuitSubSystem(SDL_INIT_AUDIO);
+
+      // wait here until event thread handles SIGCONT
+      while(SDL_AtomicGet(&monitor_paused)) {
+        // but catch a shutdwon request to avoid blocking
+        if (! SDL_AtomicGet(&monitor_active)) {
+          return 0;
+        }
+        SDL_Delay(200); // sufficient to check 5x per sec
+      }
+
+      // restart audio after resume
+      SDL_InitSubSystem(SDL_INIT_AUDIO);
+      if (backup.legacy) {
+        while(1) {
+          if (SDL_OpenAudio(&backup.desired, NULL)) {
+            SDL_Log("Failed to open audio: %s\nRetrying...", SDL_GetError());
+            SDL_Delay(250);
+          }
+          else {
+            continue;
+          }
+        }
+        SDL_PauseAudio(0);
+      }
+      else {
+        while(1) {
+          SDL_AudioDeviceID dev = SDL_OpenAudioDevice(backup.devname, backup.iscapture, &backup.desired, NULL, backup.changes);
+          if (dev == 0) {
+            SDL_Log("Failed to open audio: %s\nRetrying...", SDL_GetError());
+            SDL_Delay(250);
+          }
+          else {
+            continue;
+          }
+        }
+        SDL_PauseAudioDevice(backup.id, 0);
+      }
+      // restore audio hotplug events
+      SDL_EventState(SDL_AUDIODEVICEADDED, es_add);
+      SDL_EventState(SDL_AUDIODEVICEREMOVED, es_rem);
+    }
+
+    SDL_Delay(200); // sufficient to check 5x per sec
+  }
+  return 0;
+}
 
 /* This is not declared in any header, although it is shared between some
     parts of SDL, because we don't want anything calling it without an
@@ -151,6 +243,31 @@ int
 SDL_InitSubSystem(Uint32 flags)
 {
     Uint32 flags_initialized = 0;
+
+    if(!monitor_thread) { // must be first time run
+      struct sigaction usr1;
+      struct sigaction cont;
+
+      // register SIGUSR1 handler
+      memset(&usr1, 0, sizeof(struct sigaction));
+      sigemptyset(&usr1.sa_mask);
+      usr1.sa_sigaction = enter_stop_cont;
+      usr1.sa_flags = SA_SIGINFO;
+      sigaction(SIGUSR1, &usr1, NULL);
+
+      // register SIGCONT handler
+      memset(&cont, 0, sizeof(struct sigaction));
+      sigemptyset(&cont.sa_mask);
+      cont.sa_sigaction = recover_from_stop_cont;
+      cont.sa_flags = SA_SIGINFO;
+      sigaction(SIGCONT, &cont, NULL);
+
+      // initiate monitor thread for suspend function
+      SDL_AtomicSet(&monitor_active, 1);
+      SDL_AtomicSet(&monitor_paused, 0);
+      backup.devname = NULL;
+      monitor_thread = SDL_CreateThread(suspend_monitor, "suspend_monitor", NULL);
+    }
 
     if (!SDL_MainIsReady) {
         SDL_SetError("Application didn't initialize properly, did you include SDL_main.h in the file containing your main() function?");
@@ -419,6 +536,15 @@ SDL_QuitSubSystem(Uint32 flags)
         SDL_PrivateSubsystemRefCountDecr(SDL_INIT_EVENTS);
     }
 #endif
+
+  // Shutdown suspend function thread if all subsytems have stopped
+  if (SDL_WasInit(SDL_INIT_EVERYTHING) == 0) {
+    if(monitor_thread) {
+      SDL_AtomicSet(&monitor_active, 0);
+      SDL_WaitThread(monitor_thread, NULL);
+      monitor_thread = NULL;
+    }
+  }
 }
 
 Uint32

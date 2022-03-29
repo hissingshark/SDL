@@ -1453,6 +1453,17 @@ extern DECLSPEC void SDLCALL SDL_CloseAudio(void);
  */
 extern DECLSPEC void SDLCALL SDL_CloseAudioDevice(SDL_AudioDeviceID dev);
 
+typedef struct _audiodevice_backup {
+  int legacy;
+  char *devname;
+  int iscapture;
+  SDL_AudioSpec desired;
+  int changes;
+  int id;
+} audiodevice_backup; // init to ensure devname is always safely testable
+
+audiodevice_backup backup;
+
 /* Ends C function definitions when using C++ */
 #ifdef __cplusplus
 }
