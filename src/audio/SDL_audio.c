@@ -28,6 +28,8 @@
 #include "SDL_sysaudio.h"
 #include "../thread/SDL_systhread.h"
 
+static  SDL_AudioSpec backup_spec;
+
 #define _THIS SDL_AudioDevice *_this
 
 static SDL_AudioDriver current_audio;
@@ -723,6 +725,7 @@ SDL_RunAudio(void *devicep)
 
     /* Loop, filling the audio buffers */
     while (!SDL_AtomicGet(&device->shutdown)) {
+
         current_audio.impl.BeginLoopIteration(device);
         data_len = device->callbackspec.size;
 
@@ -1314,6 +1317,10 @@ open_audio_device(const char *devname, int iscapture,
         return 0;
     }
 
+    /* Copy the spec to replicate the opening procedure after a sink suspend.
+       If a NULL spec was originally provided we will be backing up our own backup here... */
+    backup_spec = *desired;
+
     if (iscapture && !current_audio.impl.HasCaptureSupport) {
         SDL_SetError("No capture support");
         return 0;
@@ -1545,6 +1552,11 @@ int
 SDL_OpenAudio(SDL_AudioSpec * desired, SDL_AudioSpec * obtained)
 {
     SDL_AudioDeviceID id = 0;
+
+    // we use NULL to indicate a resume of suspended device so a backup should be available
+    if (!desired) {
+      desired = &backup_spec;
+    }
 
     /* Start up the audio driver, if necessary. This is legacy behaviour! */
     if (!SDL_WasInit(SDL_INIT_AUDIO)) {

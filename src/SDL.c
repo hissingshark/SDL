@@ -61,6 +61,78 @@ extern int SDL_HelperWindowCreate(void);
 extern int SDL_HelperWindowDestroy(void);
 #endif
 
+/* Required for suspend/resume function */
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/file.h>
+#include <signal.h>
+
+static SDL_atomic_t monitor_paused;
+static SDL_atomic_t monitor_active;
+static SDL_Thread *monitor_thread = NULL;
+
+/* Function to handle SIGCONT */
+static void
+recover_from_stop_cont(int x, siginfo_t *y, void *z)
+{
+  SDL_AtomicSet(&monitor_paused, 0);
+  if (SDL_WasInit(SDL_INIT_EVENTS)) {
+    SDL_PumpEvents();
+    SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+  }
+}
+
+/* thread to monitor IPC for suspend request */
+static int
+suspend_monitor(void *noop) {
+  // setup IPC to trigger suspension
+  char *ipc;
+  int shm;
+
+  printf("Starting monitor thread...\n");
+
+  shm = shm_open("SDL_suspend", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+  if (shm == -1) {
+    printf("Error: failed to open shared memory for IPC\n");
+  }
+  if (ftruncate(shm, sizeof(char)) == -1) {
+    printf("Error: failed to allocate shared memory for ICP\n");
+  }
+
+  ipc = mmap(NULL, sizeof(char), PROT_READ | PROT_WRITE, MAP_SHARED, shm, 0);
+  *ipc = '0';
+
+  while (SDL_AtomicGet(&monitor_active)) {
+    flock(shm, LOCK_EX);
+
+    if (*ipc == '1') {
+      *ipc = '0';
+      flock(shm, LOCK_UN);
+      SDL_AtomicSet(&monitor_paused, 1);
+      if (SDL_WasInit(SDL_INIT_AUDIO)) {
+        SDL_CloseAudio();
+      }
+
+      kill(-getpgid(getpid()), SIGSTOP);
+
+      // wait here until event thread handles SIGCONT
+      while(SDL_AtomicGet(&monitor_paused)) {
+      }
+
+      if (SDL_WasInit(SDL_INIT_AUDIO)) {
+        SDL_OpenAudio(NULL, NULL);
+        SDL_PauseAudioDevice(1, 0);
+      }
+    } else {
+        flock(shm, LOCK_UN);
+    }
+
+    SDL_Delay(200); // sufficient to check 5x per sec
+  }
+
+  return 0;
+}
 
 /* This is not declared in any header, although it is shared between some
     parts of SDL, because we don't want anything calling it without an
@@ -151,6 +223,21 @@ int
 SDL_InitSubSystem(Uint32 flags)
 {
     Uint32 flags_initialized = 0;
+
+    if(!monitor_thread) { // must be first time run
+      // register SIGCONT handler
+      struct sigaction act;
+      memset(&act, 0, sizeof(struct sigaction));
+      sigemptyset(&act.sa_mask);
+      act.sa_sigaction = recover_from_stop_cont;
+      act.sa_flags = SA_SIGINFO;
+      sigaction(SIGCONT, &act, NULL);
+
+      // initiate monitor thread for suspend function
+      SDL_AtomicSet(&monitor_active, 1);
+      SDL_AtomicSet(&monitor_paused, 0);
+      monitor_thread = SDL_CreateThread(suspend_monitor, "suspend_monitor", NULL);
+    }
 
     if (!SDL_MainIsReady) {
         SDL_SetError("Application didn't initialize properly, did you include SDL_main.h in the file containing your main() function?");
@@ -419,6 +506,16 @@ SDL_QuitSubSystem(Uint32 flags)
         SDL_PrivateSubsystemRefCountDecr(SDL_INIT_EVENTS);
     }
 #endif
+
+  // Shutdown the IPC monitor for suspend function if everything stopped
+  if (SDL_WasInit(SDL_INIT_EVERYTHING) == 0) {
+    if(monitor_thread) {
+      SDL_AtomicSet(&monitor_active, 0);
+      SDL_WaitThread(monitor_thread, NULL);
+      monitor_thread = NULL;
+    }
+  }
+
 }
 
 Uint32
