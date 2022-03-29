@@ -28,6 +28,9 @@
 #include "SDL_sysaudio.h"
 #include "../thread/SDL_systhread.h"
 
+#include <string.h>
+extern audiodevice_backup backup;
+
 #define _THIS SDL_AudioDevice *_this
 
 static SDL_AudioDriver current_audio;
@@ -1225,6 +1228,19 @@ open_audio_device(const char *devname, int iscapture,
     void *handle = NULL;
     int i = 0;
 
+    /* Copy the supplied spec and params to replicate the opening procedure after a sink suspend. */
+    if (devname && (devname != backup.devname)) { /* Name only if supplied and if different source address i.e not resuming*/
+      if (backup.devname) { /* ES restarts the device itself - mustn't leave the previous backed-up name dangling */
+        free(backup.devname);
+      }
+      backup.devname = (char*)malloc(strlen(devname) * sizeof(char));
+      strcpy(backup.devname, devname);
+    }
+    backup.iscapture = iscapture;
+    backup.desired = *desired;
+    backup.changes = allowed_changes;
+    backup.id = min_id;
+
     if (!SDL_WasInit(SDL_INIT_AUDIO)) {
         SDL_SetError("Audio subsystem is not initialized");
         return 0;
@@ -1461,6 +1477,7 @@ int
 SDL_OpenAudio(SDL_AudioSpec * desired, SDL_AudioSpec * obtained)
 {
     SDL_AudioDeviceID id = 0;
+    backup.legacy = 1;
 
     /* Start up the audio driver, if necessary. This is legacy behaviour! */
     if (!SDL_WasInit(SDL_INIT_AUDIO)) {
@@ -1498,6 +1515,7 @@ SDL_OpenAudioDevice(const char *device, int iscapture,
                     const SDL_AudioSpec * desired, SDL_AudioSpec * obtained,
                     int allowed_changes)
 {
+    backup.legacy = 0;
     return open_audio_device(device, iscapture, desired, obtained,
                              allowed_changes, 2);
 }

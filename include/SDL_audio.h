@@ -848,6 +848,19 @@ extern DECLSPEC void SDLCALL SDL_UnlockAudioDevice(SDL_AudioDeviceID dev);
 extern DECLSPEC void SDLCALL SDL_CloseAudio(void);
 extern DECLSPEC void SDLCALL SDL_CloseAudioDevice(SDL_AudioDeviceID dev);
 
+/**
+ *  Storage of requested audio device spec.
+ *  Used for suspending and resuming the sink.
+*/
+typedef struct _audiodevice_backup {
+  int legacy;
+  char *devname;
+  int iscapture;
+  SDL_AudioSpec desired;
+  int changes;
+  int id;
+} audiodevice_backup;
+
 /* Ends C function definitions when using C++ */
 #ifdef __cplusplus
 }
