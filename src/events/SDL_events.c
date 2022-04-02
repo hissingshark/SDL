@@ -34,8 +34,6 @@
 #include "../video/SDL_sysvideo.h"
 #include "SDL_syswm.h"
 
-#include <signal.h>
-
 #undef SDL_PRIs64
 #ifdef __WIN32__
 #define SDL_PRIs64  "I64d"
@@ -508,16 +506,6 @@ SDL_StopEventLoop(void)
     }
 }
 
-/* Triggered when receiving SIGCONT and flushes the event queue.
-   Defined here for the benefit of the following function. */
-static void
-recover_from_stop_cont(int x, siginfo_t *y, void *z)
-{
-    // the arguments are unused, but required to match sa_sigaction prototype
-    SDL_PumpEvents();
-    SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
-}
-
 /* This function (and associated calls) may be called more than once */
 int
 SDL_StartEventLoop(void)
@@ -527,8 +515,6 @@ SDL_StartEventLoop(void)
 
        FIXME: Does this introduce any other bugs with events at startup?
      */
-
-    struct sigaction act;
 
     /* Create the lock and set ourselves active */
 #if !SDL_THREADS_DISABLED
@@ -557,12 +543,6 @@ SDL_StartEventLoop(void)
 #endif
 
     SDL_AtomicSet(&SDL_EventQ.active, 1);
-
-    memset(&act, 0, sizeof(struct sigaction));
-    sigemptyset(&act.sa_mask);
-    act.sa_sigaction = recover_from_stop_cont;
-    act.sa_flags = SA_SIGINFO;
-    sigaction(SIGCONT, &act, NULL);
 
     return 0;
 }
