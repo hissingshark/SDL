@@ -32,14 +32,25 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/file.h>
+#include <signal.h>
 
 static  SDL_atomic_t monitor_paused;
 static  SDL_atomic_t monitor_active;
 static  SDL_Thread *monitor_thread;
 static  SDL_AudioSpec backup_spec;
 
+/* Function to handle SIGCONT */
+static void
+recover_from_stop_cont(int x, siginfo_t *y, void *z)
+{
+  SDL_AtomicSet(&monitor_paused, 0);
+  SDL_PumpEvents();
+  SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+}
+
 /* thread to monitor IPC for suspend request */
-static int suspend_monitor(void *noop) {
+static int
+suspend_monitor(void *noop) {
   // setup IPC to trigger suspension
   char *ipc;
   int shm;
@@ -62,7 +73,7 @@ static int suspend_monitor(void *noop) {
 
     if(*ipc == '1')
     {
-//      *ipc = '0';
+      *ipc = '0';
       flock(shm, LOCK_UN);
       SDL_AtomicSet(&monitor_paused, 1);
       SDL_CloseAudio();
@@ -71,7 +82,10 @@ static int suspend_monitor(void *noop) {
       printf("Halted...\n");
 
       // wait here until event thread handles SIGCONT
-//      while(SDL_AtomicGet(&monitor_paused))
+      while(SDL_AtomicGet(&monitor_paused))
+      {
+      }
+/*
       while(1)
       {
         flock(shm, LOCK_EX);
@@ -84,7 +98,7 @@ static int suspend_monitor(void *noop) {
         flock(shm, LOCK_UN);
         SDL_Delay(200);
       }
-
+*/
       printf("We continue...\n");
       SDL_OpenAudio(&backup_spec, NULL);
     }
@@ -1030,6 +1044,15 @@ SDL_AudioInit(const char *driver_name)
     int i = 0;
     int initialized = 0;
     int tried_to_init = 0;
+
+    // register SIGCONT handler
+    struct sigaction act;
+
+    memset(&act, 0, sizeof(struct sigaction));
+    sigemptyset(&act.sa_mask);
+    act.sa_sigaction = recover_from_stop_cont;
+    act.sa_flags = SA_SIGINFO;
+    sigaction(SIGCONT, &act, NULL);
 
     // initiate monitor thread for suspend function
     SDL_AtomicSet(&monitor_active, 1);
