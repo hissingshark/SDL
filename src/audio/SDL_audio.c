@@ -85,22 +85,10 @@ suspend_monitor(void *noop) {
       while(SDL_AtomicGet(&monitor_paused))
       {
       }
-/*
-      while(1)
-      {
-        flock(shm, LOCK_EX);
-        if(*ipc == '2')
-        {
-          *ipc = '0';
-          flock(shm, LOCK_UN);
-          break;
-        }
-        flock(shm, LOCK_UN);
-        SDL_Delay(200);
-      }
-*/
+
       printf("We continue...\n");
       SDL_OpenAudio(&backup_spec, NULL);
+      SDL_PauseAudioDevice(1, 0);
     }
     else
       flock(shm, LOCK_UN);
