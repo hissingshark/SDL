@@ -28,77 +28,7 @@
 #include "SDL_sysaudio.h"
 #include "../thread/SDL_systhread.h"
 
-#include <sys/mman.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/file.h>
-#include <signal.h>
-
-static  SDL_atomic_t monitor_paused;
-static  SDL_atomic_t monitor_active;
-static  SDL_Thread *monitor_thread;
-static  SDL_AudioSpec backup_spec;
-
-/* Function to handle SIGCONT */
-static void
-recover_from_stop_cont(int x, siginfo_t *y, void *z)
-{
-  SDL_AtomicSet(&monitor_paused, 0);
-  SDL_PumpEvents();
-  SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
-}
-
-/* thread to monitor IPC for suspend request */
-static int
-suspend_monitor(void *noop) {
-  // setup IPC to trigger suspension
-  char *ipc;
-  int shm;
-
-  printf("Starting monitor thread...\n");
-
-  shm = shm_open("SDL_suspend", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-  if (shm == -1)
-     printf("Error: failed to open shared memory for IPC\n");
-
-  if (ftruncate(shm, sizeof(char)) == -1)
-     printf("Error: failed to allocate shared memory for ICP\n");
-
-  ipc = mmap(NULL, sizeof(char), PROT_READ | PROT_WRITE, MAP_SHARED, shm, 0);
-  *ipc = '0';
-
-  while(SDL_AtomicGet(&monitor_active))
-  {
-    flock(shm, LOCK_EX);
-
-    if(*ipc == '1')
-    {
-      *ipc = '0';
-      flock(shm, LOCK_UN);
-      SDL_AtomicSet(&monitor_paused, 1);
-      SDL_CloseAudio();
-      printf("Halting %d\n", getpgid(getpid()));
-      kill(-getpgid(getpid()), SIGSTOP);
-      printf("Halted...\n");
-
-      // wait here until event thread handles SIGCONT
-      while(SDL_AtomicGet(&monitor_paused))
-      {
-      }
-
-      printf("We continue...\n");
-      SDL_OpenAudio(&backup_spec, NULL);
-      SDL_PauseAudioDevice(1, 0);
-    }
-    else
-      flock(shm, LOCK_UN);
-
-    SDL_Delay(200);
-  }
-  printf("Stopping monitor thread...\n");
-
-  return 0;
-}
+static  SDL_AudioSpec *backup_spec = NULL;
 
 #define _THIS SDL_AudioDevice *_this
 
@@ -1033,20 +963,6 @@ SDL_AudioInit(const char *driver_name)
     int initialized = 0;
     int tried_to_init = 0;
 
-    // register SIGCONT handler
-    struct sigaction act;
-
-    memset(&act, 0, sizeof(struct sigaction));
-    sigemptyset(&act.sa_mask);
-    act.sa_sigaction = recover_from_stop_cont;
-    act.sa_flags = SA_SIGINFO;
-    sigaction(SIGCONT, &act, NULL);
-
-    // initiate monitor thread for suspend function
-    SDL_AtomicSet(&monitor_active, 1);
-    SDL_AtomicSet(&monitor_paused, 0);
-    monitor_thread = SDL_CreateThreadInternal(suspend_monitor, "suspend_monitor", 64*1024, NULL);
-
     if (SDL_GetCurrentAudioDriver()) {
         SDL_AudioQuit();        /* shutdown driver if already running. */
     }
@@ -1396,8 +1312,17 @@ open_audio_device(const char *devname, int iscapture,
     void *handle = NULL;
     int i = 0;
 
-    // copy the spec to replicate the opening procedure after a sink suspend
-    backup_spec = *desired;
+    /* Copy the spec to replicate the opening procedure after a sink suspend.
+       Providing a NULL spec indicates we are restarting with the backup spec */
+    if (desired) {
+      if (!backup_spec) { // avoid memory leak if we accidentally provide a spec when we already one stored
+        backup_spec = SDL_malloc(sizeof(SDL_AudioSpec));
+      }
+      *backup_spec = *desired;
+    } else {
+      desired = backup_spec;
+    }
+
 
     if (!SDL_GetCurrentAudioDriver()) {
         SDL_SetError("Audio subsystem is not initialized");
@@ -1765,9 +1690,8 @@ SDL_AudioQuit(void)
 {
     SDL_AudioDeviceID i;
 
-    SDL_AtomicSet(&monitor_active, 0);
-    SDL_WaitThread(monitor_thread, NULL);
-    printf("Monitor thread returned...\n");
+    if(backup_spec)
+      SDL_free(backup_spec);
 
     if (!current_audio.name) {  /* not initialized?! */
         return;
