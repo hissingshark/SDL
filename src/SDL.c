@@ -93,43 +93,42 @@ suspend_monitor(void *noop) {
   printf("Starting monitor thread...\n");
 
   shm = shm_open("SDL_suspend", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-  if (shm == -1)
-     printf("Error: failed to open shared memory for IPC\n");
-
-  if (ftruncate(shm, sizeof(char)) == -1)
-     printf("Error: failed to allocate shared memory for ICP\n");
+  if (shm == -1) {
+    printf("Error: failed to open shared memory for IPC\n");
+  }
+  if (ftruncate(shm, sizeof(char)) == -1) {
+    printf("Error: failed to allocate shared memory for ICP\n");
+  }
 
   ipc = mmap(NULL, sizeof(char), PROT_READ | PROT_WRITE, MAP_SHARED, shm, 0);
   *ipc = '0';
 
-  while(SDL_AtomicGet(&monitor_active))
-  {
+  while (SDL_AtomicGet(&monitor_active)) {
     flock(shm, LOCK_EX);
 
-    if(*ipc == '1')
-    {
+    if (*ipc == '1') {
       *ipc = '0';
       flock(shm, LOCK_UN);
       SDL_AtomicSet(&monitor_paused, 1);
       if (SDL_WasInit(SDL_INIT_AUDIO)) {
         SDL_CloseAudio();
       }
+
       kill(-getpgid(getpid()), SIGSTOP);
 
       // wait here until event thread handles SIGCONT
-      while(SDL_AtomicGet(&monitor_paused))
-      {
+      while(SDL_AtomicGet(&monitor_paused)) {
       }
 
       if (SDL_WasInit(SDL_INIT_AUDIO)) {
         SDL_OpenAudio(NULL, NULL);
         SDL_PauseAudioDevice(1, 0);
       }
+    } else {
+        flock(shm, LOCK_UN);
     }
-    else
-      flock(shm, LOCK_UN);
 
-    SDL_Delay(200);
+    SDL_Delay(200); // sufficient to check 5x per sec
   }
 
   return 0;

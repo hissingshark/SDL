@@ -28,7 +28,7 @@
 #include "SDL_sysaudio.h"
 #include "../thread/SDL_systhread.h"
 
-static  SDL_AudioSpec *backup_spec = NULL;
+static  SDL_AudioSpec backup_spec;
 
 #define _THIS SDL_AudioDevice *_this
 
@@ -1312,22 +1312,14 @@ open_audio_device(const char *devname, int iscapture,
     void *handle = NULL;
     int i = 0;
 
-    /* Copy the spec to replicate the opening procedure after a sink suspend.
-       Providing a NULL spec indicates we are restarting with the backup spec */
-    if (desired) {
-      if (!backup_spec) { // avoid memory leak if we accidentally provide a spec when we already one stored
-        backup_spec = SDL_malloc(sizeof(SDL_AudioSpec));
-      }
-      *backup_spec = *desired;
-    } else {
-      desired = backup_spec;
-    }
-
-
     if (!SDL_GetCurrentAudioDriver()) {
         SDL_SetError("Audio subsystem is not initialized");
         return 0;
     }
+
+    /* Copy the spec to replicate the opening procedure after a sink suspend.
+       If a NULL spec was originally provided we will be backing up our own backup here... */
+    backup_spec = *desired;
 
     if (iscapture && !current_audio.impl.HasCaptureSupport) {
         SDL_SetError("No capture support");
@@ -1561,6 +1553,11 @@ SDL_OpenAudio(SDL_AudioSpec * desired, SDL_AudioSpec * obtained)
 {
     SDL_AudioDeviceID id = 0;
 
+    // we use NULL to indicate a resume of suspended device so a backup should be available
+    if (!desired) {
+      desired = &backup_spec;
+    }
+
     /* Start up the audio driver, if necessary. This is legacy behaviour! */
     if (!SDL_WasInit(SDL_INIT_AUDIO)) {
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
@@ -1689,9 +1686,6 @@ void
 SDL_AudioQuit(void)
 {
     SDL_AudioDeviceID i;
-
-    if(backup_spec)
-      SDL_free(backup_spec);
 
     if (!current_audio.name) {  /* not initialized?! */
         return;
