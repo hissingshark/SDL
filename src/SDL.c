@@ -420,11 +420,6 @@ SDL_Init(Uint32 flags)
 void
 SDL_QuitSubSystem(Uint32 flags)
 {
-  SDL_AtomicSet(&monitor_active, 0);
-  if(monitor_thread) {
-    SDL_WaitThread(monitor_thread, NULL);
-  }
-
 #if defined(__OS2__)
 #if SDL_THREAD_OS2
     SDL_OS2TLSFree(); /* thread/os2/SDL_systls.c */
@@ -511,6 +506,16 @@ SDL_QuitSubSystem(Uint32 flags)
         SDL_PrivateSubsystemRefCountDecr(SDL_INIT_EVENTS);
     }
 #endif
+
+  // Shutdown the IPC monitor for suspend function if everything stopped
+  if (SDL_WasInit(SDL_INIT_EVERYTHING) == 0) {
+    if(monitor_thread) {
+      SDL_AtomicSet(&monitor_active, 0);
+      SDL_WaitThread(monitor_thread, NULL);
+      monitor_thread = NULL;
+    }
+  }
+
 }
 
 Uint32
