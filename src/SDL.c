@@ -74,6 +74,13 @@ static SDL_Thread *monitor_thread = NULL;
 
 /* Function to handle SIGCONT */
 static void
+enter_stop_cont(int x, siginfo_t *y, void *z)
+{
+  SDL_AtomicSet(&monitor_paused, 1);
+}
+
+/* Function to handle SIGCONT */
+static void
 recover_from_stop_cont(int x, siginfo_t *y, void *z)
 {
   SDL_AtomicSet(&monitor_paused, 0);
@@ -86,49 +93,31 @@ recover_from_stop_cont(int x, siginfo_t *y, void *z)
 /* thread to monitor IPC for suspend request */
 static int
 suspend_monitor(void *noop) {
-  // setup IPC to trigger suspension
-  char *ipc;
-  int shm;
-
   printf("Starting monitor thread...\n");
 
-  shm = shm_open("SDL_suspend", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-  if (shm == -1) {
-    printf("Error: failed to open shared memory for IPC\n");
-  }
-  if (ftruncate(shm, sizeof(char)) == -1) {
-    printf("Error: failed to allocate shared memory for ICP\n");
-  }
-
-  ipc = mmap(NULL, sizeof(char), PROT_READ | PROT_WRITE, MAP_SHARED, shm, 0);
-  *ipc = '0';
-
   while (SDL_AtomicGet(&monitor_active)) {
-    flock(shm, LOCK_EX);
 
-    if (*ipc == '1') {
-      *ipc = '0';
-      flock(shm, LOCK_UN);
-      SDL_AtomicSet(&monitor_paused, 1);
-      if (SDL_WasInit(SDL_INIT_AUDIO)) {
-        SDL_CloseAudio();
-      }
-
-      kill(-getpgid(getpid()), SIGSTOP);
-
-      // wait here until event thread handles SIGCONT
-      while(SDL_AtomicGet(&monitor_paused)) {
-      }
-
-      if (SDL_WasInit(SDL_INIT_AUDIO)) {
-        SDL_OpenAudio(NULL, NULL);
-        SDL_PauseAudioDevice(1, 0);
-      }
-    } else {
-        flock(shm, LOCK_UN);
+    // wait here until event thread handles SIGUSR1
+    while(! SDL_AtomicGet(&monitor_paused)) {
+      SDL_Delay(200); // sufficient to check 5x per sec
     }
 
-    SDL_Delay(200); // sufficient to check 5x per sec
+    if (SDL_WasInit(SDL_INIT_AUDIO)) {
+      SDL_CloseAudio();
+    }
+    SDL_Delay(500); // wait for ALSA release - or does it just block?
+
+    kill(-getpgid(getpid()), SIGSTOP);
+
+    // wait here until event thread handles SIGCONT
+    while(SDL_AtomicGet(&monitor_paused)) {
+      SDL_Delay(200); // sufficient to check 5x per sec
+    }
+
+    if (SDL_WasInit(SDL_INIT_AUDIO)) {
+      SDL_OpenAudio(NULL, NULL);
+      SDL_PauseAudioDevice(1, 0);
+    }
   }
 
   return 0;
@@ -225,13 +214,22 @@ SDL_InitSubSystem(Uint32 flags)
     Uint32 flags_initialized = 0;
 
     if(!monitor_thread) { // must be first time run
+      struct sigaction usr1;
+      struct sigaction cont;
+
+      // register SIGUSR1 handler
+      memset(&usr1, 0, sizeof(struct sigaction));
+      sigemptyset(&usr1.sa_mask);
+      usr1.sa_sigaction = enter_stop_cont;
+      usr1.sa_flags = SA_SIGINFO;
+      sigaction(SIGUSR1, &usr1, NULL);
+
       // register SIGCONT handler
-      struct sigaction act;
-      memset(&act, 0, sizeof(struct sigaction));
-      sigemptyset(&act.sa_mask);
-      act.sa_sigaction = recover_from_stop_cont;
-      act.sa_flags = SA_SIGINFO;
-      sigaction(SIGCONT, &act, NULL);
+      memset(&cont, 0, sizeof(struct sigaction));
+      sigemptyset(&cont.sa_mask);
+      cont.sa_sigaction = recover_from_stop_cont;
+      cont.sa_flags = SA_SIGINFO;
+      sigaction(SIGCONT, &cont, NULL);
 
       // initiate monitor thread for suspend function
       SDL_AtomicSet(&monitor_active, 1);
