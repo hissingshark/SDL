@@ -93,33 +93,27 @@ recover_from_stop_cont(int x, siginfo_t *y, void *z)
 /* thread to monitor IPC for suspend request */
 static int
 suspend_monitor(void *noop) {
-  printf("Starting monitor thread...\n");
-
   while (SDL_AtomicGet(&monitor_active)) {
+    // check if event thread handled SIGUSR1
+    if(SDL_AtomicGet(&monitor_paused)) {
+      // stop audio for suspend
+      if (SDL_WasInit(SDL_INIT_AUDIO)) {
+        SDL_CloseAudio();
+      }
 
-    // wait here until event thread handles SIGUSR1
-    while(! SDL_AtomicGet(&monitor_paused)) {
-      SDL_Delay(200); // sufficient to check 5x per sec
+      // wait here until event thread handles SIGCONT
+      while(SDL_AtomicGet(&monitor_paused)) {
+        SDL_Delay(200); // sufficient to check 5x per sec
+      }
+
+      // restart audio for resume
+      if (SDL_WasInit(SDL_INIT_AUDIO)) {
+        SDL_OpenAudio(NULL, NULL);
+        SDL_PauseAudioDevice(1, 0);
+      }
     }
-
-    if (SDL_WasInit(SDL_INIT_AUDIO)) {
-      SDL_CloseAudio();
-    }
-    SDL_Delay(500); // wait for ALSA release - or does it just block?
-
-    kill(-getpgid(getpid()), SIGSTOP);
-
-    // wait here until event thread handles SIGCONT
-    while(SDL_AtomicGet(&monitor_paused)) {
-      SDL_Delay(200); // sufficient to check 5x per sec
-    }
-
-    if (SDL_WasInit(SDL_INIT_AUDIO)) {
-      SDL_OpenAudio(NULL, NULL);
-      SDL_PauseAudioDevice(1, 0);
-    }
+    SDL_Delay(200); // sufficient to check 5x per sec
   }
-
   return 0;
 }
 
@@ -513,7 +507,6 @@ SDL_QuitSubSystem(Uint32 flags)
       monitor_thread = NULL;
     }
   }
-
 }
 
 Uint32
