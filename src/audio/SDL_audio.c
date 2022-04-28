@@ -28,7 +28,15 @@
 #include "SDL_sysaudio.h"
 #include "../thread/SDL_systhread.h"
 
-static  SDL_AudioSpec backup_spec;
+#include <string.h>
+
+static struct audiodevice_backup {
+  char *devname;
+  int iscapture;
+  SDL_AudioSpec desired;
+  int changes;
+  int id;
+} backup = { .devname = NULL }; // init to ensure devname is always safely testable
 
 #define _THIS SDL_AudioDevice *_this
 
@@ -1317,9 +1325,27 @@ open_audio_device(const char *devname, int iscapture,
         return 0;
     }
 
-    /* Copy the spec to replicate the opening procedure after a sink suspend.
-       If a NULL spec was originally provided we will be backing up our own backup here... */
-    backup_spec = *desired;
+    if (desired) { /* Copy the supplied spec and params to replicate the opening procedure after a sink suspend. */
+
+      if (devname) {
+        if (backup.devname) { /* ES restarts the device itself - mustn't leave the previous backed-up name dangling */
+          free(backup.devname);
+        }
+        backup.devname = (char*)malloc(strlen(devname));
+        strcpy(backup.devname, devname);
+      }
+      backup.iscapture = iscapture;
+      backup.desired = *desired;
+      backup.changes = allowed_changes;
+      backup.id = min_id;
+    }
+    else { /* we use a NULL desired_spec to indicate a resume of suspended device so a backup should be available */
+//      devname = backup.devname;
+      iscapture = backup.iscapture;
+      desired = &backup.desired;
+      allowed_changes = backup.changes;
+      min_id = backup.id;
+    }
 
     if (iscapture && !current_audio.impl.HasCaptureSupport) {
         SDL_SetError("No capture support");
@@ -1553,11 +1579,6 @@ SDL_OpenAudio(SDL_AudioSpec * desired, SDL_AudioSpec * obtained)
 {
     SDL_AudioDeviceID id = 0;
 
-    // we use NULL to indicate a resume of suspended device so a backup should be available
-    if (!desired) {
-      desired = &backup_spec;
-    }
-
     /* Start up the audio driver, if necessary. This is legacy behaviour! */
     if (!SDL_WasInit(SDL_INIT_AUDIO)) {
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
@@ -1623,7 +1644,13 @@ SDL_GetAudioStatus(void)
 void
 SDL_PauseAudioDevice(SDL_AudioDeviceID devid, int pause_on)
 {
-    SDL_AudioDevice *device = get_audio_device(devid);
+    SDL_AudioDevice *device = NULL;
+
+    if (devid == 0 ) { /* this is the suspend feature calling, so insert stored id*/
+        devid = backup.id;
+    }
+
+    device = get_audio_device(devid);
     if (device) {
         current_audio.impl.LockDevice(device);
         SDL_AtomicSet(&device->paused, pause_on ? 1 : 0);
@@ -1673,6 +1700,9 @@ SDL_UnlockAudio(void)
 void
 SDL_CloseAudioDevice(SDL_AudioDeviceID devid)
 {
+    if (devid == 0 ) { /* this is the suspend feature calling, so insert stored id*/
+        devid = backup.id;
+    }
     close_audio_device(get_audio_device(devid));
 }
 

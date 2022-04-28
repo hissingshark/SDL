@@ -98,7 +98,7 @@ suspend_monitor(void *noop) {
     if(SDL_AtomicGet(&monitor_paused)) {
       // stop audio for suspend
       if (SDL_WasInit(SDL_INIT_AUDIO)) {
-        SDL_CloseAudio();
+        SDL_CloseAudioDevice(0); // 0 is impossible, indicating a suspend job
       }
 
       // wait here until event thread handles SIGCONT
@@ -109,7 +109,7 @@ suspend_monitor(void *noop) {
       // restart audio for resume
       if (SDL_WasInit(SDL_INIT_AUDIO)) {
         SDL_OpenAudio(NULL, NULL);
-        SDL_PauseAudioDevice(1, 0);
+        SDL_PauseAudioDevice(0, 0);  // 0 is impossible, indicating a suspend job
       }
     }
     SDL_Delay(200); // sufficient to check 5x per sec
