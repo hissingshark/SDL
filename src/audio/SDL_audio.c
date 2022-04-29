@@ -1312,18 +1312,13 @@ open_audio_device(const char *devname, int iscapture,
                   const SDL_AudioSpec * desired, SDL_AudioSpec * obtained,
                   int allowed_changes, int min_id)
 {
-    const SDL_bool is_internal_thread = (desired->callback == NULL);
+    const SDL_bool is_internal_thread = (desired) ? (desired->callback == NULL) : (backup.desired.callback == NULL);
     SDL_AudioDeviceID id = 0;
     SDL_AudioSpec _obtained;
     SDL_AudioDevice *device;
     SDL_bool build_stream;
     void *handle = NULL;
     int i = 0;
-
-    if (!SDL_GetCurrentAudioDriver()) {
-        SDL_SetError("Audio subsystem is not initialized");
-        return 0;
-    }
 
     if (desired) { /* Copy the supplied spec and params to replicate the opening procedure after a sink suspend. */
 
@@ -1340,11 +1335,16 @@ open_audio_device(const char *devname, int iscapture,
       backup.id = min_id;
     }
     else { /* we use a NULL desired_spec to indicate a resume of suspended device so a backup should be available */
-//      devname = backup.devname;
+      devname = backup.devname;
       iscapture = backup.iscapture;
       desired = &backup.desired;
       allowed_changes = backup.changes;
       min_id = backup.id;
+    }
+
+    if (!SDL_GetCurrentAudioDriver()) {
+        SDL_SetError("Audio subsystem is not initialized");
+        return 0;
     }
 
     if (iscapture && !current_audio.impl.HasCaptureSupport) {
@@ -1600,7 +1600,8 @@ SDL_OpenAudio(SDL_AudioSpec * desired, SDL_AudioSpec * obtained)
         SDL_zero(_obtained);
         id = open_audio_device(NULL, 0, desired, &_obtained, 0, 1);
         /* On successful open, copy calculated values into 'desired'. */
-        if (id > 0) {
+        /* (if it was provided, else we already have the values in the backup spec) */
+        if (id > 0 && desired) {
             desired->size = _obtained.size;
             desired->silence = _obtained.silence;
         }
