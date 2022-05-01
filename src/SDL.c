@@ -71,6 +71,7 @@ extern int SDL_HelperWindowDestroy(void);
 static SDL_atomic_t monitor_paused;
 static SDL_atomic_t monitor_active;
 static SDL_Thread *monitor_thread = NULL;
+extern audiodevice_backup backup;
 
 /* Function to handle SIGUSR1 */
 static void
@@ -94,24 +95,38 @@ recover_from_stop_cont(int x, siginfo_t *y, void *z)
 static int
 suspend_monitor(void *noop) {
   while (SDL_AtomicGet(&monitor_active)) {
-    // check if event thread handled SIGUSR1
-    if(SDL_AtomicGet(&monitor_paused)) {
+    // check if event thread handled SIGUSR1, but only need action if using audio
+    if(SDL_AtomicGet(&monitor_paused) && SDL_WasInit(SDL_INIT_AUDIO)) {
       // stop audio for suspend
-      if (SDL_WasInit(SDL_INIT_AUDIO)) {
-        SDL_CloseAudioDevice(0); // 0 is impossible, indicating a suspend job
+      if (backup.legacy) {
+        SDL_CloseAudio();
       }
+      else {
+        SDL_CloseAudioDevice(backup.id);
+      }
+      SDL_QuitSubSystem(SDL_INIT_AUDIO);
 
       // wait here until event thread handles SIGCONT
       while(SDL_AtomicGet(&monitor_paused)) {
+        // but catch a shutdwon request to avoid blocking
+        if (! SDL_AtomicGet(&monitor_active)) {
+          return 0;
+        }
         SDL_Delay(200); // sufficient to check 5x per sec
       }
 
       // restart audio for resume
-      if (SDL_WasInit(SDL_INIT_AUDIO)) {
-        SDL_OpenAudio(NULL, NULL);
-        SDL_PauseAudioDevice(0, 0);  // 0 is impossible, indicating a suspend job
+      if (backup.legacy) {
+        SDL_InitSubSystem(SDL_INIT_AUDIO);
+        SDL_OpenAudio(&backup.desired, NULL);
+        SDL_PauseAudio(0);
+      }
+      else {
+        SDL_OpenAudioDevice(backup.devname, backup.iscapture, &backup.desired, NULL, backup.changes);
+        SDL_PauseAudioDevice(backup.id, 0);
       }
     }
+
     SDL_Delay(200); // sufficient to check 5x per sec
   }
   return 0;

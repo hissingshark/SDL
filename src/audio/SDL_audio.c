@@ -30,14 +30,6 @@
 
 #include <string.h>
 
-static struct audiodevice_backup {
-  char *devname;
-  int iscapture;
-  SDL_AudioSpec desired;
-  int changes;
-  int id;
-} backup = { .devname = NULL }; // init to ensure devname is always safely testable
-
 #define _THIS SDL_AudioDevice *_this
 
 static SDL_AudioDriver current_audio;
@@ -1312,7 +1304,7 @@ open_audio_device(const char *devname, int iscapture,
                   const SDL_AudioSpec * desired, SDL_AudioSpec * obtained,
                   int allowed_changes, int min_id)
 {
-    const SDL_bool is_internal_thread = (desired) ? (desired->callback == NULL) : (backup.desired.callback == NULL);
+    const SDL_bool is_internal_thread = (desired->callback == NULL);
     SDL_AudioDeviceID id = 0;
     SDL_AudioSpec _obtained;
     SDL_AudioDevice *device;
@@ -1320,27 +1312,18 @@ open_audio_device(const char *devname, int iscapture,
     void *handle = NULL;
     int i = 0;
 
-    if (desired) { /* Copy the supplied spec and params to replicate the opening procedure after a sink suspend. */
-
-      if (devname) {
-        if (backup.devname) { /* ES restarts the device itself - mustn't leave the previous backed-up name dangling */
-          free(backup.devname);
-        }
-        backup.devname = (char*)malloc(strlen(devname));
-        strcpy(backup.devname, devname);
+    /* Copy the supplied spec and params to replicate the opening procedure after a sink suspend. */
+    if (devname) {
+      if (backup.devname) { /* ES restarts the device itself - mustn't leave the previous backed-up name dangling */
+        free(backup.devname);
       }
-      backup.iscapture = iscapture;
-      backup.desired = *desired;
-      backup.changes = allowed_changes;
-      backup.id = min_id;
+      backup.devname = (char*)malloc(strlen(devname));
+      strcpy(backup.devname, devname);
     }
-    else { /* we use a NULL desired_spec to indicate a resume of suspended device so a backup should be available */
-      devname = backup.devname;
-      iscapture = backup.iscapture;
-      desired = &backup.desired;
-      allowed_changes = backup.changes;
-      min_id = backup.id;
-    }
+    backup.iscapture = iscapture;
+    backup.desired = *desired;
+    backup.changes = allowed_changes;
+    backup.id = min_id;
 
     if (!SDL_GetCurrentAudioDriver()) {
         SDL_SetError("Audio subsystem is not initialized");
@@ -1578,6 +1561,7 @@ int
 SDL_OpenAudio(SDL_AudioSpec * desired, SDL_AudioSpec * obtained)
 {
     SDL_AudioDeviceID id = 0;
+    backup.legacy = 1;
 
     /* Start up the audio driver, if necessary. This is legacy behaviour! */
     if (!SDL_WasInit(SDL_INIT_AUDIO)) {
@@ -1600,8 +1584,7 @@ SDL_OpenAudio(SDL_AudioSpec * desired, SDL_AudioSpec * obtained)
         SDL_zero(_obtained);
         id = open_audio_device(NULL, 0, desired, &_obtained, 0, 1);
         /* On successful open, copy calculated values into 'desired'. */
-        /* (if it was provided, else we already have the values in the backup spec) */
-        if (id > 0 && desired) {
+        if (id > 0) {
             desired->size = _obtained.size;
             desired->silence = _obtained.silence;
         }
@@ -1616,6 +1599,7 @@ SDL_OpenAudioDevice(const char *device, int iscapture,
                     const SDL_AudioSpec * desired, SDL_AudioSpec * obtained,
                     int allowed_changes)
 {
+    backup.legacy = 0;
     return open_audio_device(device, iscapture, desired, obtained,
                              allowed_changes, 2);
 }
@@ -1646,10 +1630,6 @@ void
 SDL_PauseAudioDevice(SDL_AudioDeviceID devid, int pause_on)
 {
     SDL_AudioDevice *device = NULL;
-
-    if (devid == 0 ) { /* this is the suspend feature calling, so insert stored id*/
-        devid = backup.id;
-    }
 
     device = get_audio_device(devid);
     if (device) {
@@ -1701,9 +1681,6 @@ SDL_UnlockAudio(void)
 void
 SDL_CloseAudioDevice(SDL_AudioDeviceID devid)
 {
-    if (devid == 0 ) { /* this is the suspend feature calling, so insert stored id*/
-        devid = backup.id;
-    }
     close_audio_device(get_audio_device(devid));
 }
 
