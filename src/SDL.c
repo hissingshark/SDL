@@ -96,8 +96,10 @@ static int
 suspend_monitor(void *noop) {
   while (SDL_AtomicGet(&monitor_active)) {
     // check if event thread handled SIGUSR1, but only need action if using audio
-    if(SDL_AtomicGet(&monitor_paused) && SDL_WasInit(SDL_INIT_AUDIO)) {
-      // stop audio for suspend
+    if(SDL_AtomicGet(&monitor_paused) && SDL_WasInit(SDL_INIT_AUDIO)) { // stop audio ready for halt
+      // backup and disable audio hotplug events
+      int es_add = SDL_EventState(SDL_AUDIODEVICEADDED, SDL_DISABLE);
+      int es_rem = SDL_EventState(SDL_AUDIODEVICEREMOVED, SDL_DISABLE);
       if (backup.legacy) {
         SDL_CloseAudio();
       }
@@ -115,9 +117,9 @@ suspend_monitor(void *noop) {
         SDL_Delay(200); // sufficient to check 5x per sec
       }
 
-      // restart audio for resume
+      // restart audio after resume
+      SDL_InitSubSystem(SDL_INIT_AUDIO);
       if (backup.legacy) {
-        SDL_InitSubSystem(SDL_INIT_AUDIO);
         SDL_OpenAudio(&backup.desired, NULL);
         SDL_PauseAudio(0);
       }
@@ -125,6 +127,9 @@ suspend_monitor(void *noop) {
         SDL_OpenAudioDevice(backup.devname, backup.iscapture, &backup.desired, NULL, backup.changes);
         SDL_PauseAudioDevice(backup.id, 0);
       }
+      // restore audio hotplug events
+      SDL_EventState(SDL_AUDIODEVICEADDED, es_add);
+      SDL_EventState(SDL_AUDIODEVICEREMOVED, es_rem);
     }
 
     SDL_Delay(200); // sufficient to check 5x per sec
@@ -243,6 +248,7 @@ SDL_InitSubSystem(Uint32 flags)
       // initiate monitor thread for suspend function
       SDL_AtomicSet(&monitor_active, 1);
       SDL_AtomicSet(&monitor_paused, 0);
+      backup.devname = NULL;
       monitor_thread = SDL_CreateThread(suspend_monitor, "suspend_monitor", NULL);
     }
 

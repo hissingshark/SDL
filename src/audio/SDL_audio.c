@@ -1313,11 +1313,11 @@ open_audio_device(const char *devname, int iscapture,
     int i = 0;
 
     /* Copy the supplied spec and params to replicate the opening procedure after a sink suspend. */
-    if (devname) {
+    if (devname && (devname != backup.devname)) { /* Name only if supplied and if different source address i.e not resuming*/
       if (backup.devname) { /* ES restarts the device itself - mustn't leave the previous backed-up name dangling */
         free(backup.devname);
       }
-      backup.devname = (char*)malloc(strlen(devname));
+      backup.devname = (char*)malloc(strlen(devname) * sizeof(char));
       strcpy(backup.devname, devname);
     }
     backup.iscapture = iscapture;
