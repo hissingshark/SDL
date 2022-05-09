@@ -120,11 +120,28 @@ suspend_monitor(void *noop) {
       // restart audio after resume
       SDL_InitSubSystem(SDL_INIT_AUDIO);
       if (backup.legacy) {
-        SDL_OpenAudio(&backup.desired, NULL);
+        while(1) {
+          if (SDL_OpenAudio(&backup.desired, NULL)) {
+            SDL_Log("Failed to open audio: %s\nRetrying...", SDL_GetError());
+            SDL_Delay(250);
+          }
+          else {
+            continue;
+          }
+        }
         SDL_PauseAudio(0);
       }
       else {
-        SDL_OpenAudioDevice(backup.devname, backup.iscapture, &backup.desired, NULL, backup.changes);
+        while(1) {
+          SDL_AudioDeviceID dev = SDL_OpenAudioDevice(backup.devname, backup.iscapture, &backup.desired, NULL, backup.changes);
+          if (dev == 0) {
+            SDL_Log("Failed to open audio: %s\nRetrying...", SDL_GetError());
+            SDL_Delay(250);
+          }
+          else {
+            continue;
+          }
+        }
         SDL_PauseAudioDevice(backup.id, 0);
       }
       // restore audio hotplug events
