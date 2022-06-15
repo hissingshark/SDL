@@ -725,7 +725,6 @@ SDL_RunAudio(void *devicep)
 
     /* Loop, filling the audio buffers */
     while (!SDL_AtomicGet(&device->shutdown)) {
-
         current_audio.impl.BeginLoopIteration(device);
         data_len = device->callbackspec.size;
 
@@ -1629,9 +1628,7 @@ SDL_GetAudioStatus(void)
 void
 SDL_PauseAudioDevice(SDL_AudioDeviceID devid, int pause_on)
 {
-    SDL_AudioDevice *device = NULL;
-
-    device = get_audio_device(devid);
+    SDL_AudioDevice *device = get_audio_device(devid);
     if (device) {
         current_audio.impl.LockDevice(device);
         SDL_AtomicSet(&device->paused, pause_on ? 1 : 0);

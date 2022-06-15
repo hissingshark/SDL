@@ -62,10 +62,6 @@ extern int SDL_HelperWindowDestroy(void);
 #endif
 
 /* Required for suspend/resume function */
-#include <sys/mman.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/file.h>
 #include <signal.h>
 
 static SDL_atomic_t monitor_paused;
