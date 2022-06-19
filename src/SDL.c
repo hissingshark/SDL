@@ -126,7 +126,7 @@ suspend_monitor(void *noop) {
             SDL_Delay(250);
           }
           else {
-            continue;
+            break;
           }
         }
         SDL_PauseAudio(0);
@@ -139,7 +139,7 @@ suspend_monitor(void *noop) {
             SDL_Delay(250);
           }
           else {
-            continue;
+            break;
           }
         }
         SDL_PauseAudioDevice(backup.id, 0);
