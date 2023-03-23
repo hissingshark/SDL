@@ -1,4 +1,4 @@
-/*
+  /*
   Simple DirectMedia Layer
   Copyright (C) 1997-2022 Sam Lantinga <slouken@libsdl.org>
 
@@ -29,6 +29,7 @@
 #include "../thread/SDL_systhread.h"
 
 #include <string.h>
+extern audiodevice_backup backup;
 
 #define _THIS SDL_AudioDevice *_this
 

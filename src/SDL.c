@@ -62,16 +62,12 @@ extern int SDL_HelperWindowDestroy(void);
 #endif
 
 /* Required for suspend/resume function */
-#include <sys/mman.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/file.h>
 #include <signal.h>
 
 static SDL_atomic_t monitor_paused;
 static SDL_atomic_t monitor_active;
 static SDL_Thread *monitor_thread = NULL;
-extern audiodevice_backup backup;
+audiodevice_backup backup;
 
 /* Function to handle SIGUSR1 */
 static void

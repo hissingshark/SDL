@@ -1462,8 +1462,6 @@ typedef struct _audiodevice_backup {
   int id;
 } audiodevice_backup; // init to ensure devname is always safely testable
 
-audiodevice_backup backup;
-
 /* Ends C function definitions when using C++ */
 #ifdef __cplusplus
 }
